@@ -1,0 +1,75 @@
+name: Conflict Generator
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: conflict-generator-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  update_main_after_branch_creation:
+    runs-on: ubuntu-latest
+
+    # Skip template repo and bot triggers
+    if: github.repository != 'pitt-1530/spring26-commit-cafe' &&
+      github.actor != 'github-actions' &&
+      github.actor != 'CoffeeBot' &&
+      github.actor != 'dependabot[bot]'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure Git
+        run: |
+          git config user.name  "CoffeeBot"
+          git config user.email "bot@nvf.pitt.edu"
+
+      - name: Detect which TODOs were changed
+        id: todocheck
+        run: |
+          git fetch origin main --prune
+          BASE=$(git merge-base HEAD origin/main)
+
+          DIFF=$(git diff "$BASE" HEAD -- CommitCafe.java)
+
+          TARGETS=""
+          if echo "$DIFF" | grep -q 'STUDENT_TODO_1A'; then TARGETS="$TARGETS TODO_1A"; fi
+          if echo "$DIFF" | grep -q 'STUDENT_TODO_1B'; then TARGETS="$TARGETS TODO_1B"; fi
+          if echo "$DIFF" | grep -q 'STUDENT_TODO_2A'; then TARGETS="$TARGETS TODO_2A"; fi
+          if echo "$DIFF" | grep -q 'STUDENT_TODO_2B'; then TARGETS="$TARGETS TODO_2B"; fi
+          TARGETS=$(echo $TARGETS | xargs)
+
+          echo "targets=$TARGETS" >> $GITHUB_OUTPUT
+          echo "Detected targets: $TARGETS"
+
+      - name: Generate merge conflict
+        if: steps.todocheck.outputs.targets != ''
+        run: |
+          git fetch origin main
+          git checkout -b update-main origin/main
+
+          python3 .github/scripts/inject.py CommitCafe.java ${{ steps.todocheck.outputs.targets }}
+
+          if git diff --quiet -- CommitCafe.java; then
+            echo "No new bot change needed."
+            exit 0
+          fi
+
+          COMMIT_MSG=$(cat .github/scripts/.commit_msg)
+
+          git add CommitCafe.java
+          git commit -m "$COMMIT_MSG"
+          git push --force origin update-main:main
+
+      - name: Complete
+        run: echo "Workflow finished."

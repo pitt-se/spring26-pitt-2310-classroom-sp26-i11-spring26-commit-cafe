@@ -1,0 +1,53 @@
+name: Conflict Resolution Check
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if brew() is implemented
+        id: precheck
+        run: |
+          if grep -qE 'STUDENT_TODO_2A|STUDENT_TODO_2B' CommitCafe.java; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "brew() not yet implemented — skipping verification."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Java
+        if: steps.precheck.outputs.skip == 'false'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Compile
+        if: steps.precheck.outputs.skip == 'false'
+        run: javac CommitCafe.java
+
+      - name: Run and validate output
+        if: steps.precheck.outputs.skip == 'false'
+        run: |
+          OUTPUT=$(java CommitCafe)
+          printf 'Program output:\n%s\n' "$OUTPUT"
+
+          LINE_COUNT=$(printf '%s\n' "$OUTPUT" | grep -c .)
+          LAST_LINE=$(printf '%s\n' "$OUTPUT" | tail -n 1)
+
+          # At least 3 lines: brew output for each call + summary
+          test "$LINE_COUNT" -ge 3
+
+          # Last line must be the summary confirming 2 cups brewed
+          echo "$LAST_LINE" | grep -Eq '^.* brewed 2 cups today\.$'
+
+          # Lines before the summary must contain brew-related output
+          printf '%s\n' "$OUTPUT" | head -n $((LINE_COUNT - 1)) | grep -Eq 'brewed|CoffeeBot'
